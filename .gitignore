@@ -1,0 +1,85 @@
+# ==============================================================================
+# Environment and Secrets (CRITICAL: Never commit credentials)
+# ==============================================================================
+.env
+.env.*
+!.env.example
+
+# ==============================================================================
+# Python Virtual Environments & Bytecode
+# ==============================================================================
+nexus-env/
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+.Python
+
+# Distribution / Packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+
+# Jupyter Notebook Checkpoints
+.ipynb_checkpoints/
+
+# Local Database Files
+*.db
+*.sqlite
+*.sqlite3
+nexus.db
+
+# Temp simulation scripts
+.temp_sim/
+*.log
+
+# ==============================================================================
+# Node & Frontend (nexus-frontend)
+# ==============================================================================
+.vite/
+node_modules/
+nexus-frontend/node_modules/
+nexus-frontend/dist/
+nexus-frontend/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ==============================================================================
+# IDE, OS, and Editor Artifacts
+# ==============================================================================
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
