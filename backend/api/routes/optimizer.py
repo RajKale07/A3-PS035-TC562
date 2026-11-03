@@ -28,6 +28,8 @@ class OptimizeRequest(BaseModel):
     max_risk: float = 5.0
     max_paths: int = 3
     time_limit_sec: float = 10.0
+    service_tier: str = "BEST_EFFORT"   # "CRITICAL" | "BUSINESS" | "BEST_EFFORT"
+    min_bandwidth_mbps: float = 0.0
 
 
 @router.post("/paths")
@@ -62,6 +64,8 @@ async def optimize_paths(
                 "target": lnk.target,
                 "cost": lnk.cost,
                 "latency_ms": lnk.latency_ms,
+                "bandwidth_mbps": lnk.bandwidth_mbps,
+                "loss_rate": lnk.loss_rate,
             }
             for lnk in topology.links
         ],
@@ -74,6 +78,8 @@ async def optimize_paths(
         max_risk=req.max_risk,
         max_paths=req.max_paths,
         time_limit_sec=req.time_limit_sec,
+        service_tier=req.service_tier,
+        min_bandwidth_mbps=req.min_bandwidth_mbps,
     )
 
     opt_result = find_resilient_paths(G, cfg)

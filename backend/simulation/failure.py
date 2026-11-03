@@ -67,8 +67,21 @@ def run_failure_simulation(
 
     H: nx.Graph = G.copy()
 
-    # Remove failed nodes (and their incident edges automatically)
-    actual_failed = [n for n in scenario.failed_nodes if H.has_node(n)]
+    # Remove failed nodes (and their incident edges automatically).
+    # Node IDs may be stored as int or str; try both forms.
+    node_set = set(H.nodes())
+    actual_failed = []
+    for n in scenario.failed_nodes:
+        if n in node_set:
+            actual_failed.append(n)
+        else:
+            # Try numeric conversion (graph uses int nodes, scenario uses str)
+            try:
+                n_int = int(n)
+                if n_int in node_set:
+                    actual_failed.append(n_int)
+            except (ValueError, TypeError):
+                pass
     H.remove_nodes_from(actual_failed)
 
     # Remove failed links
@@ -109,7 +122,7 @@ def run_failure_simulation(
         resilience_score=resilience_score,
         connectivity_ratio=round(connectivity_ratio, 4),
         avg_path_length=avg_path,
-        failed_nodes=actual_failed,
+        failed_nodes=[str(n) for n in actual_failed],
         surviving_nodes=n_surviving,
         surviving_edges=H.number_of_edges(),
         components=components,

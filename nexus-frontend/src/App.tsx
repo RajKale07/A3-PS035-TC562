@@ -5,16 +5,26 @@ import {
   generateTopology,
   runSimulation,
   optimizePaths,
+  runCascadeSimulation,
+  runWSL2Emulation,
+  generateRecoveryPlan,
+  getTopologyTelemetry,
   TopologySummary,
   TopologyDetails,
   SimulationResult,
   OptimizationResponse,
   ResiliencePath,
+  CascadeReport,
+  EmulationReport,
+  RecoveryPlan,
+  RecoveryExecution,
+  TelemetrySnapshot,
 } from './api';
 import { NetworkCanvas } from './components/NetworkCanvas';
 import { ControlPanel } from './components/ControlPanel';
 import { TelemetryDrawer } from './components/TelemetryDrawer';
-import { Network, Database, Cpu } from 'lucide-react';
+import { RecoveryModal } from './components/RecoveryModal';
+import { Network, Database, Cpu, CheckCircle } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [topologies, setTopologies] = useState<TopologySummary[]>([]);
@@ -23,18 +33,30 @@ export const App: React.FC = () => {
 
   const [failedNodes, setFailedNodes] = useState<string[]>([]);
   const [simulation, setSimulation] = useState<SimulationResult | null>(null);
+  const [cascadeResult, setCascadeResult] = useState<CascadeReport | null>(null);
+  const [emulationResult, setEmulationResult] = useState<EmulationReport | null>(null);
+  const [telemetrySnapshot, setTelemetrySnapshot] = useState<TelemetrySnapshot | null>(null);
 
   const [selectedSource, setSelectedSource] = useState<string | null>(null);
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
   const [optimization, setOptimization] = useState<OptimizationResponse | null>(null);
   const [activePath, setActivePath] = useState<ResiliencePath | null>(null);
 
+  const [recoveryPlan, setRecoveryPlan] = useState<RecoveryPlan | null>(null);
+  const [notification, setNotification] = useState<string | null>(null);
+
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoadingTelemetry, setIsLoadingTelemetry] = useState<boolean>(false);
 
   // Load topology list on initial mount
   useEffect(() => {
     loadTopologies();
   }, []);
+
+  const showNotification = (msg: string) => {
+    setNotification(msg);
+    setTimeout(() => setNotification(null), 4000);
+  };
 
   const loadTopologies = async () => {
     try {
@@ -56,6 +78,9 @@ export const App: React.FC = () => {
       setCurrentTopology(details);
       setFailedNodes([]);
       setSimulation(null);
+      setCascadeResult(null);
+      setEmulationResult(null);
+      setTelemetrySnapshot(null);
       setOptimization(null);
       setActivePath(null);
       setSelectedSource(null);
@@ -67,12 +92,13 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleGenerateTopology = async (name: string, nodes: number, prob: number) => {
+  const handleGenerateTopology = async (name: string, nodes: number, prob: number, preset: string = 'random') => {
     setIsLoading(true);
     try {
-      const res = await generateTopology(name, nodes, prob);
+      const res = await generateTopology(name, nodes, prob, 42, preset);
       await loadTopologies();
       handleSelectTopology(res.id);
+      showNotification(`Topology "${name}" generated successfully`);
     } catch (err) {
       console.error('Failed to generate topology', err);
     } finally {
@@ -87,10 +113,55 @@ export const App: React.FC = () => {
       const res = await runSimulation(selectedTopologyId, type);
       setSimulation(res);
       setFailedNodes(res.failed_nodes);
+      showNotification(`Simulation finished: ${(res.resilience_score * 100).toFixed(1)}% resilience`);
     } catch (err) {
       console.error('Failed to run simulation', err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleRunCascade = async () => {
+    if (!selectedTopologyId || !currentTopology) return;
+    setIsLoading(true);
+    try {
+      const firstNode = currentTopology.nodes[0]?.id || '0';
+      const res = await runCascadeSimulation(selectedTopologyId, [firstNode], 0.2, 10);
+      setCascadeResult(res);
+      setFailedNodes(res.all_failed);
+      showNotification(`Cascade stabilized in ${res.total_steps} step(s) with ${res.cascade_amplification}x amplification`);
+    } catch (err) {
+      console.error('Failed to run cascade', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRunWSL2 = async () => {
+    if (!selectedTopologyId) return;
+    setIsLoading(true);
+    try {
+      const res = await runWSL2Emulation(selectedTopologyId, failedNodes);
+      setEmulationResult(res);
+      showNotification(`WSL2 Mininet complete: ${res.packet_loss_pct.toFixed(1)}% packet loss`);
+    } catch (err) {
+      console.error('WSL2 Emulation failed', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handlePollTelemetry = async () => {
+    if (!selectedTopologyId) return;
+    setIsLoadingTelemetry(true);
+    try {
+      const res = await getTopologyTelemetry(selectedTopologyId);
+      setTelemetrySnapshot(res);
+      showNotification(`Polled ${res.link_count} links (${res.alert_count} alert(s) detected)`);
+    } catch (err) {
+      console.error('Failed to poll telemetry', err);
+    } finally {
+      setIsLoadingTelemetry(false);
     }
   };
 
@@ -107,14 +178,23 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleOptimize = async (source: string, target: string, maxRisk: number) => {
+  const handleOptimize = async (
+    source: string,
+    target: string,
+    maxRisk: number,
+    tier: string = 'CRITICAL',
+    minBw: number = 1000
+  ) => {
     if (!selectedTopologyId) return;
     setIsLoading(true);
     try {
-      const res = await optimizePaths(selectedTopologyId, source, target, maxRisk);
+      const res = await optimizePaths(selectedTopologyId, source, target, maxRisk, 3, tier, minBw);
       setOptimization(res);
       if (res.paths.length > 0) {
         setActivePath(res.paths[0]);
+        showNotification(`Found ${res.paths.length} resilient path(s) [${tier} Tier]`);
+      } else {
+        showNotification(`No feasible path under budget [${tier} Tier]`);
       }
     } catch (err) {
       console.error('Optimization failed', err);
@@ -123,8 +203,29 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleGenerateRecovery = async () => {
+    if (!selectedTopologyId || !selectedSource || !selectedTarget) return;
+    setIsLoading(true);
+    try {
+      const plan = await generateRecoveryPlan(selectedTopologyId, selectedSource, selectedTarget, 3);
+      setRecoveryPlan(plan);
+    } catch (err) {
+      console.error('Failed to generate recovery plan', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRecoveryExecuted = (result: RecoveryExecution) => {
+    setRecoveryPlan(null);
+    showNotification(
+      `Plan #${result.plan_id} executed! Resilience: ${(result.resilience_after ? (result.resilience_after * 100).toFixed(1) : '100')}%` +
+      (result.replanning_triggered ? ' (Adaptive replanning triggered!)' : '')
+    );
+  };
+
   return (
-    <div className="flex flex-col h-screen w-screen bg-slate-950 select-none">
+    <div className="flex flex-col h-screen w-screen bg-slate-950 select-none font-sans">
       {/* Top Bar */}
       <header className="h-12 border-b border-slate-800 px-6 flex items-center justify-between bg-slate-900/60 backdrop-blur-md">
         <div className="flex items-center space-x-3">
@@ -132,8 +233,16 @@ export const App: React.FC = () => {
           <span className="font-semibold text-sm text-slate-200">
             NEXUS Research Workspace
           </span>
-          <span className="text-xs text-slate-500 font-mono">v0.1.0-alpha</span>
+          <span className="text-xs text-slate-500 font-mono">Adaptive Network Resilience Intelligence</span>
         </div>
+
+        {notification && (
+          <div className="flex items-center space-x-1.5 px-3 py-1 bg-cyan-950 border border-cyan-800/80 text-cyan-300 rounded-full text-xs animate-fade-in">
+            <CheckCircle className="w-3.5 h-3.5" />
+            <span>{notification}</span>
+          </div>
+        )}
+
         <div className="flex items-center space-x-6 text-xs text-slate-400">
           <div className="flex items-center space-x-1.5">
             <Cpu className="w-3.5 h-3.5 text-cyan-400" />
@@ -159,7 +268,10 @@ export const App: React.FC = () => {
           onSelectTopology={handleSelectTopology}
           onGenerateTopology={handleGenerateTopology}
           onRunSimulation={handleRunSimulation}
+          onRunCascade={handleRunCascade}
+          onRunWSL2={handleRunWSL2}
           onOptimize={handleOptimize}
+          onGenerateRecovery={handleGenerateRecovery}
           selectedSource={selectedSource}
           selectedTarget={selectedTarget}
           paths={optimization?.paths || []}
@@ -184,10 +296,27 @@ export const App: React.FC = () => {
 
           {/* Bottom Telemetry Drawer */}
           <div className="mt-4">
-            <TelemetryDrawer simulation={simulation} optimization={optimization} />
+            <TelemetryDrawer
+              simulation={simulation}
+              optimization={optimization}
+              cascadeResult={cascadeResult}
+              emulationResult={emulationResult}
+              telemetrySnapshot={telemetrySnapshot}
+              onRefreshTelemetry={handlePollTelemetry}
+              isLoadingTelemetry={isLoadingTelemetry}
+            />
           </div>
         </main>
       </div>
+
+      {/* Human-in-the-loop Recovery Modal */}
+      {recoveryPlan && (
+        <RecoveryModal
+          plan={recoveryPlan}
+          onClose={() => setRecoveryPlan(null)}
+          onExecuted={handleRecoveryExecuted}
+        />
+      )}
     </div>
   );
 };

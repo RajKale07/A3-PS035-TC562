@@ -25,6 +25,8 @@ class OptimizationConfig:
     max_risk: float = 5.0          # maximum cumulative node-risk budget
     max_paths: int = 3             # number of alternative paths to return
     time_limit_sec: float = 10.0  # OR-Tools solver wall-clock limit
+    service_tier: str = "BEST_EFFORT"   # "CRITICAL" | "BUSINESS" | "BEST_EFFORT"
+    min_bandwidth_mbps: float = 0.0     # strict minimum link bandwidth requirement
 
 
 @dataclass
@@ -36,6 +38,8 @@ class ResiliencePath:
     total_risk: float
     total_latency_ms: float
     hop_count: int
+    min_link_bandwidth: float = 1000.0
+    max_link_loss_rate: float = 0.0
 
 
 @dataclass
@@ -63,6 +67,8 @@ class OptimizationResult:
                     "total_risk": p.total_risk,
                     "total_latency_ms": p.total_latency_ms,
                     "hop_count": p.hop_count,
+                    "min_link_bandwidth": p.min_link_bandwidth,
+                    "max_link_loss_rate": p.max_link_loss_rate,
                 }
                 for p in self.paths
             ],
@@ -98,6 +104,11 @@ def find_resilient_paths(
         )
 
     # ── Enumerate candidate paths ─────────────────────────────────────────────
+    # Effective risk budget: CRITICAL tier enforces a tighter risk budget
+    effective_max_risk = cfg.max_risk
+    if cfg.service_tier == "CRITICAL":
+        effective_max_risk = cfg.max_risk * 0.75
+
     candidates: list[ResiliencePath] = []
     try:
         path_gen = nx.simple_paths.shortest_simple_paths(
@@ -107,9 +118,33 @@ def find_resilient_paths(
             risk = sum(
                 G.nodes[n].get("risk_weight", 1.0) for n in raw_path
             )
-            if risk > cfg.max_risk:
+            if risk > effective_max_risk:
                 if len(candidates) >= cfg.max_paths * 5:
                     break
+                continue
+
+            # Check link constraints (bandwidth & loss rate per service tier)
+            violates_constraints = False
+            path_bandwidths = []
+            path_losses = []
+            for i in range(len(raw_path) - 1):
+                edge_data = G.edges[raw_path[i], raw_path[i + 1]]
+                bw = edge_data.get("bandwidth_mbps", 1000.0)
+                loss = edge_data.get("loss_rate", 0.0)
+                path_bandwidths.append(bw)
+                path_losses.append(loss)
+
+                if cfg.min_bandwidth_mbps > 0 and bw < cfg.min_bandwidth_mbps:
+                    violates_constraints = True
+                    break
+                if cfg.service_tier == "CRITICAL" and loss > 0.02:
+                    violates_constraints = True
+                    break
+                if cfg.service_tier == "BUSINESS" and loss > 0.05:
+                    violates_constraints = True
+                    break
+
+            if violates_constraints:
                 continue
 
             cost = sum(
@@ -127,6 +162,8 @@ def find_resilient_paths(
                     total_risk=round(risk, 3),
                     total_latency_ms=round(latency, 3),
                     hop_count=len(raw_path) - 1,
+                    min_link_bandwidth=min(path_bandwidths) if path_bandwidths else 1000.0,
+                    max_link_loss_rate=max(path_losses) if path_losses else 0.0,
                 )
             )
             if len(candidates) >= max(50, cfg.max_paths * 10):
@@ -155,10 +192,25 @@ def find_resilient_paths(
     target_count = min(cfg.max_paths, n)
     model.add(sum(x) == target_count)
 
-    # Objective: minimise total weighted cost + latency (integer scaled)
+    # Objective: weighted combination based on service tier
+    # CRITICAL tier prioritizes minimal risk and minimal latency over monetary cost
     SCALE = 1000
+    if cfg.service_tier == "CRITICAL":
+        cost_weight, lat_weight, risk_weight = 0.2, 1.0, 2.0
+    elif cfg.service_tier == "BUSINESS":
+        cost_weight, lat_weight, risk_weight = 0.6, 0.5, 0.8
+    else:  # BEST_EFFORT
+        cost_weight, lat_weight, risk_weight = 1.0, 0.1, 0.2
+
     obj_terms = [
-        x[i] * int((candidates[i].total_cost + 0.1 * candidates[i].total_latency_ms) * SCALE)
+        x[i] * int(
+            (
+                cost_weight * candidates[i].total_cost
+                + lat_weight * candidates[i].total_latency_ms
+                + risk_weight * candidates[i].total_risk
+            )
+            * SCALE
+        )
         for i in range(n)
     ]
     model.minimize(sum(obj_terms))

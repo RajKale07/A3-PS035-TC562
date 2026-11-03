@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -114,4 +115,40 @@ class SimulationResult(Base):
     topology: Mapped["NetworkTopology"] = relationship(
         "NetworkTopology", back_populates="simulations"
     )
+
+
+class RecoveryPlan(Base):
+    """Stores a generated recovery plan with human-approval workflow."""
+
+    __tablename__ = "recovery_plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    topology_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("network_topologies.id"), nullable=False
+    )
+    simulation_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("simulation_results.id"), nullable=True
+    )
+    actions_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="PENDING"
+    )  # PENDING | APPROVED | REJECTED | EXECUTED
+    risk_delta: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    resilience_before: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    resilience_after: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    outcome_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    replanning_triggered: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )  # 0/1 bool (SQLite-compatible)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    approved_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    executed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    topology: Mapped["NetworkTopology"] = relationship("NetworkTopology")
 

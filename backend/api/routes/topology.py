@@ -17,7 +17,10 @@ from backend.database import get_db
 from backend.models.network import NetworkLink, NetworkNode, NetworkTopology
 from backend.simulation.topology import (
     TopologyConfig,
+    build_abilene_topology,
+    build_fat_tree_topology,
     build_random_topology,
+    build_ring_topology,
     compute_topology_stats,
     topology_to_dict,
 )
@@ -37,6 +40,9 @@ class TopologyGenerateRequest(BaseModel):
     num_nodes: int = 10
     edge_probability: float = 0.35
     seed: int = 42
+    topology_type: str = "random"  # "random" | "abilene" | "fat_tree" | "ring"
+    fat_tree_k: int = 4            # used when topology_type == "fat_tree"
+    ring_n: int = 8                # used when topology_type == "ring"
 
 
 class TopologyResponse(BaseModel):
@@ -95,7 +101,15 @@ async def generate_topology(
         edge_probability=req.edge_probability,
         seed=req.seed,
     )
-    G = build_random_topology(cfg)
+    ttype = req.topology_type.lower()
+    if ttype == "abilene":
+        G = build_abilene_topology()
+    elif ttype == "fat_tree":
+        G = build_fat_tree_topology(k=req.fat_tree_k)
+    elif ttype == "ring":
+        G = build_ring_topology(n=req.ring_n, seed=req.seed)
+    else:
+        G = build_random_topology(cfg)
     stats = compute_topology_stats(G)
     graph_dict = topology_to_dict(G)
 
